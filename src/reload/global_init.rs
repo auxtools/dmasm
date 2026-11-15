@@ -78,6 +78,8 @@ struct Initializer<'a> {
     proc_path: Option<String>,
     /// Other static names in the same proc.
     siblings: Vec<String>,
+    /// Earlier proc statics, as (name, same-name declaration index).
+    earlier: Vec<(String, u32)>,
 }
 
 impl Initializer<'_> {
@@ -118,11 +120,14 @@ impl Snapshot {
                 .map(|(_, var)| var.name.as_str().to_owned())
                 .collect();
             let mut seen: Vec<&str> = vec![];
+            let mut earlier: Vec<(String, u32)> = vec![];
             let proc_name = name;
             for (location, var) in found {
                 let name = var.name.as_str();
                 let number = seen.iter().filter(|n| **n == name).count();
                 seen.push(name);
+                let before = earlier.clone();
+                earlier.push((name.to_owned(), number as u32));
                 if var.var_type.flags.is_const() {
                     continue;
                 }
@@ -152,6 +157,7 @@ impl Snapshot {
                         constant,
                         proc_path: Some(proc_path.clone()),
                         siblings: siblings.clone(),
+                        earlier: before,
                     });
             }
         }
@@ -455,6 +461,7 @@ impl<'a> Walk<'a> {
                             constant: var_constant(var),
                             proc_path: None,
                             siblings: vec![],
+                            earlier: vec![],
                         };
                         self.add(snapshot, init);
                     }
@@ -926,6 +933,7 @@ where
             &init.declared,
             location,
             init.proc_path.as_deref(),
+            &init.earlier,
         ) {
             Ok(code) => code,
             Err(e) => {

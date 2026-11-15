@@ -1163,6 +1163,8 @@ impl Snapshot {
         let compiled = self.compile(key)?;
         let (ty, _) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
         let mut statics = vec![];
+        // Each initializer can reference earlier statics in the proc.
+        let mut earlier = vec![];
         for s in compiled.statics {
             let constant = s.value.as_ref().and_then(const_value);
             let init = match (&constant, &s.expression) {
@@ -1173,9 +1175,11 @@ impl Snapshot {
                     &s.type_path,
                     value_location(expression, value.location),
                     static_proc_path(&s.scope),
+                    &earlier,
                 )?)),
                 _ => None,
             };
+            earlier.push((s.name.clone(), static_number(&s.scope)));
             statics.push(StaticVar {
                 name: s.name,
                 value: constant,
@@ -1237,7 +1241,7 @@ impl Snapshot {
             location,
             Statement::Return(Some(expression.clone())),
         )]);
-        self.compile_synthetic(ty, "(in list)", block, location, true, None)
+        self.compile_synthetic(ty, "(in list)", block, location, true, None, &[])
     }
 
     /// Compile a computed global or static initializer in `ty`'s scope
@@ -1249,6 +1253,7 @@ impl Snapshot {
         declared: &str,
         location: dreammaker::Location,
         proc_path: Option<&str>,
+        statics: &[(String, u32)],
     ) -> Result<ProcReload, String> {
         use dreammaker::ast::{Expression, Ident, PathOp, Prefab, RelativePath, Spanned, Term};
         // A `new` with no type makes the var's declared type
@@ -1276,7 +1281,15 @@ impl Snapshot {
             }
         }
         let block: Block = Box::new([Spanned::new(location, Statement::Return(Some(expression)))]);
-        self.compile_synthetic(ty, "(value)", block, ty.get().location, false, proc_path)
+        self.compile_synthetic(
+            ty,
+            "(value)",
+            block,
+            ty.get().location,
+            false,
+            proc_path,
+            statics,
+        )
     }
 
     /// Compiles a type's init proc: an assignment to `src.var` for each of
@@ -1309,7 +1322,7 @@ impl Snapshot {
                 )
             })
             .collect();
-        self.compile_synthetic(ty, "(init)", block, ty.get().location, false, None)
+        self.compile_synthetic(ty, "(init)", block, ty.get().location, false, None, &[])
     }
 
     /// Compile a synthetic proc on `ty`, optionally emitting debug locations
@@ -1322,6 +1335,7 @@ impl Snapshot {
         location: dreammaker::Location,
         debug_info: bool,
         proc_path: Option<&str>,
+        statics: &[(String, u32)],
     ) -> Result<ProcReload, String> {
         let value = ProcValue {
             location,
@@ -1348,7 +1362,7 @@ impl Snapshot {
         };
         let path = format!("{}/{}", ty.get().path, name);
         let compiled = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::compiler::compile_proc_as(&source, proc_path)
+            crate::compiler::compile_proc_as(&source, proc_path, statics)
         })) {
             Ok(Ok(compiled)) => compiled,
             Ok(Err(e)) => return Err(e.to_string()),
@@ -3290,6 +3304,14 @@ fn static_proc_path(scope: &str) -> Option<&str> {
     Some(path.rsplit_once('#').map_or(path, |(path, _)| path))
 }
 
+/// Extract the same-name declaration index from `proc:PATH#N`.
+fn static_number(scope: &str) -> u32 {
+    scope
+        .rsplit_once('#')
+        .and_then(|(_, number)| number.parse().ok())
+        .unwrap_or(0)
+}
+
 /// Return an initial constant, or null with code for the world to run once.
 fn static_initial(
     snapshot: &Snapshot,
@@ -3309,7 +3331,7 @@ fn static_initial(
         .map(|d| d.var_type.type_path.to_string())
         .unwrap_or_default();
     let code = snapshot
-        .compile_value(n, expression, &declared, location, None)
+        .compile_value(n, expression, &declared, location, None, &[])
         .map_err(|e| e.to_string())?;
     Ok((ConstValue::Null, Some(Box::new(code))))
 }
