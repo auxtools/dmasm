@@ -647,6 +647,8 @@ pub struct Snapshot {
     mended: HashSet<FileId>,
     /// Last `.dmf` included by the preprocessor: the world's skin.
     skin: Option<PathBuf>,
+    /// Included `.dmm` files: the maps compiled into the world.
+    maps: Vec<PathBuf>,
     /// Lazy resource-user index (see `resource_users`).
     resource_index: std::sync::OnceLock<resources::Index>,
 }
@@ -698,14 +700,18 @@ impl Snapshot {
             parser.parse_object_tree()
         };
         let skin = pp.skins().last().cloned();
+        let maps = pp.maps().to_vec();
         let defines = pp.finalize();
         let mut snapshot = Self::from_tree(ctx, tree);
         snapshot.defines = Some(defines);
         snapshot.root = dme.parent().map(Path::to_owned);
-        snapshot.skin = skin.map(|skin| match &snapshot.root {
-            Some(root) => skin.strip_prefix(root).map(Path::to_owned).unwrap_or(skin),
-            None => skin,
-        });
+        let root = snapshot.root.clone();
+        let relative = |path: PathBuf| match &root {
+            Some(root) => path.strip_prefix(root).map(Path::to_owned).unwrap_or(path),
+            None => path,
+        };
+        snapshot.skin = skin.map(relative);
+        snapshot.maps = maps.into_iter().map(relative).collect();
         if let Some(root) = &snapshot.root {
             let mut scope_names = HashMap::new();
             snapshot.ctx.files().for_each(|path| {
@@ -1020,6 +1026,7 @@ impl Snapshot {
             folded: Default::default(),
             mended: Default::default(),
             skin: None,
+            maps: vec![],
             resource_index: Default::default(),
         }
     }
@@ -1120,6 +1127,12 @@ impl Snapshot {
     /// Last `.dmf` included by the `.dme`, relative to the `.dme` directory.
     pub fn skin(&self) -> Option<&Path> {
         self.skin.as_deref()
+    }
+
+    /// Included map paths in preprocessor order, relative to the `.dme` directory
+    /// where possible. Map changes require a rebuild.
+    pub fn maps(&self) -> &[PathBuf] {
+        &self.maps
     }
 
     /// Login script from `/client/script`. Return `None` for unset or null,
