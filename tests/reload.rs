@@ -2326,6 +2326,47 @@ fn the_skin_is_the_last_interface_file_included() {
         .any(|file| file.extension() == Some("dmf".as_ref())));
 }
 
+/// Map paths respect conditional includes and are relative to the project.
+#[test]
+fn maps_are_the_map_files_included() {
+    let world = World::new("maps", "/proc/a()\n\treturn 1\n");
+    assert!(world.parse().maps().is_empty());
+    std::fs::create_dir_all(world.dir.join("maps")).unwrap();
+    for name in ["a.dmm", "b.dmm"] {
+        std::fs::write(
+            world.dir.join("maps").join(name),
+            "\"a\" = (/turf,/area)\n\n(1,1,1) = {\"\na\n\"}\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        world.dir.join("world.dme"),
+        "#include \"code/code.dm\"\n#include \"maps\\a.dmm\"\n#ifdef BIG\n#include \"maps/b.dmm\"\n#endif\n",
+    )
+    .unwrap();
+    let parse = |defines: Vec<(String, Option<String>)>| {
+        Snapshot::parse(
+            &world.dir.join("world.dme"),
+            &ParseOptions {
+                defines,
+                byond: None,
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        parse(vec![]).maps(),
+        [std::path::PathBuf::from("maps/a.dmm")]
+    );
+    assert_eq!(
+        parse(vec![("BIG".to_owned(), None)]).maps(),
+        [
+            std::path::PathBuf::from("maps/a.dmm"),
+            std::path::PathBuf::from("maps/b.dmm")
+        ]
+    );
+}
+
 #[test]
 fn a_resource_file_names_the_code_and_defaults_that_use_it() {
     let world = World::new(
