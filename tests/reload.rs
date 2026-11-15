@@ -2572,6 +2572,38 @@ fn global_init_counts_a_procs_statics_of_a_name() {
     );
 }
 
+/// Resolve earlier statics within their proc, even when other procs reuse
+/// the name, as in tgstation's `wrapped_default_list = list(default_list)`.
+#[test]
+fn global_init_reads_a_procs_earlier_statics() {
+    let before = "var/list/base = list(1)\n/proc/f()\n\tvar/static/list/d = base\n\tvar/static/list/w = list(d)\n\treturn w\n\
+                  /proc/g()\n\tvar/static/list/d = list(base)\n\treturn d\n/datum/t\n\tvar/static/flag = list(1)\n";
+    let changes = changes_of(
+        "global_init_earlier",
+        before,
+        &before.replace("flag = list(1)", "flag = list(2)"),
+    );
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let init = changes.global_init.as_ref().expect("no global init proc");
+    let mut read: Vec<String> = init
+        .code
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Instruction(Instruction::GetVar(dmasm::Variable::Global(var)), ()) => {
+                Some(format!(
+                    "{}:{}",
+                    var.scope.as_deref().unwrap_or("?"),
+                    String::from_utf8_lossy(&var.name.0)
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    read.sort();
+    assert_eq!(read, [":base", ":base", "proc:/proc/f#0:d"]);
+}
+
 #[test]
 fn changed_initializers_give_a_rebuilds_global_init_proc() {
     let before = "var/a = 5\nvar/b = a * 2\n/datum/thing\n/datum/s\n\tvar/static/x = list(1)\n\

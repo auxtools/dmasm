@@ -189,14 +189,16 @@ impl ProcCtx<'_> {
 }
 
 pub fn compile_proc(source: &ProcSource) -> Result<CompiledProc, CompileError> {
-    compile_proc_as(source, None)
+    compile_proc_as(source, None, &[])
 }
 
 /// Compile with an optional `__PROC__` override. Static initializers must name
 /// their containing proc rather than the synthetic initializer proc.
+/// `statics` lists visible proc statics by name and same-name declaration index.
 pub(crate) fn compile_proc_as(
     source: &ProcSource,
     proc_path: Option<&str>,
+    statics: &[(String, u32)],
 ) -> Result<CompiledProc, CompileError> {
     // Exclude `...` and absolute-path parameters, matching BYOND.
     let declared: Vec<&dreammaker::ast::Parameter> = source
@@ -217,6 +219,9 @@ pub(crate) fn compile_proc_as(
     let mut ctx = proc_ctx(source, param_types);
     if let Some(path) = proc_path {
         ctx.proc_path = path.to_owned();
+    }
+    for (name, number) in statics {
+        ctx.scopes[0].push((name.clone(), number | STATIC_LOCAL));
     }
     let mut compiler = Compiler::new(params.clone(), Some(ctx));
     compiler.debug_info = source.debug_info;
