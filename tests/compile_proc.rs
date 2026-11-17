@@ -5,6 +5,11 @@ use dmasm::compiler::{compile_proc, ProcSource};
 /// Compiles proc `name` of type `ty` ("" for global procs) from `code`, and
 /// returns its instructions one per line, without debug info.
 fn compile(code: &str, ty: &str, name: &str) -> String {
+    compile_on(code, ty, name, dmasm::ByondVersion::LATEST)
+}
+
+/// Compile a proc for the specified BYOND version.
+fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> String {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -31,7 +36,7 @@ fn compile(code: &str, ty: &str, name: &str) -> String {
         file: "test.dm",
         debug_info: false,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond,
         file_names: None,
     };
     let compiled = compile_proc(&source).expect("compiles");
@@ -541,32 +546,68 @@ fn a_variable_times_itself_is_squared() {
     assert!(!shadowed.contains("PowSquare"), "{}", shadowed);
 }
 
-/// Zero-weight pick entries are omitted from the switch; -0 cases equal 0.
+/// Zero-weight pick() entries retain cases from 516.1689; -0 behaves as 0.
 #[test]
 fn a_pick_of_weight_0_and_a_case_of_minus_0() {
-    let code = compile(
-        "/proc/f(a, b)\n\treturn pick(1; a, 0; b, 2; \"c\")\n",
-        "",
-        "f",
-    );
-    // one case (a's third of the draw) and the default, with b's value still written
-    let table = code.lines().find(|l| l.starts_with("PickSwitch")).unwrap();
-    assert_eq!(table.matches("=>").count(), 2, "{}", table);
-    assert!(table.contains("21845 =>"), "{}", table);
+    let v = |build| dmasm::ByondVersion::new(516, build);
+    let middle = "/proc/f(a, b)\n\treturn pick(1; a, 0; b, 2; \"c\")\n";
+    let last = "/proc/f(a, b)\n\treturn pick(1; a, 0; b)\n";
+    let table = |code: &str| {
+        code.lines()
+            .find(|l| l.starts_with("PickSwitch"))
+            .unwrap()
+            .to_owned()
+    };
+
+    // 516.1689: b's case is at a's threshold, and the last entry is the default
+    let code = compile_on(middle, "", "f", v(1689));
+    let cases = table(&code);
+    assert_eq!(cases.matches("=>").count(), 3, "{}", cases);
+    assert_eq!(cases.matches("21845 =>").count(), 2, "{}", cases);
+    let code = compile_on(last, "", "f", v(1689));
+    let cases = table(&code);
+    assert_eq!(cases.matches("=>").count(), 2, "{}", cases);
+    assert!(cases.contains("65535 =>"), "{}", cases);
+    let target = cases
+        .split("default => ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .trim();
+    assert_has(&code, &[&format!("{target}:"), "GetVar arg(1)"]);
+    assert_eq!(warnings_for(last, v(1689)), [] as [String; 0]);
+    // (a text weight counts as 0 and has a case on every build)
+    for build in [1688, 1689] {
+        let code = compile_on(
+            "/proc/f(a, b)\n\treturn pick(\"x\"; a, 3; b)\n",
+            "",
+            "f",
+            v(build),
+        );
+        assert!(table(&code).contains(" 0 =>"), "{}", code);
+    }
+
+    // Before: one case (a's third of the draw) and the default, with b's
+    // value still written
+    let code = compile_on(middle, "", "f", v(1688));
+    let cases = table(&code);
+    assert_eq!(cases.matches("=>").count(), 2, "{}", cases);
+    assert!(cases.contains("21845 =>"), "{}", cases);
     assert!(code.contains("GetVar arg(1)"), "{}", code);
     // A final zero-weight entry would jump outside the proc in DreamMaker.
     // Emit a compatibility warning and use a valid weighted entry.
-    let source = "/proc/f(a, b)\n\treturn pick(1; a, 0; b)\n";
-    let code = compile(source, "", "f");
-    let table = code.lines().find(|l| l.starts_with("PickSwitch")).unwrap();
-    assert_eq!(table.matches("=>").count(), 1, "{}", table);
-    let target = table
+    let code = compile_on(last, "", "f", v(1688));
+    let cases = table(&code);
+    assert_eq!(cases.matches("=>").count(), 1, "{}", cases);
+    let target = cases
         .split("default => ")
         .nth(1)
         .unwrap()
         .trim_end_matches([',', ' ']);
     assert_has(&code, &[&format!("{target}:"), "GetVar arg(0)"]);
-    let warnings = warnings_for(source, dmasm::ByondVersion::LATEST);
+    let warnings = warnings_for(last, v(1688));
     assert!(
         warnings.iter().any(|w| w.contains("zero-weight entry")),
         "{:?}",
@@ -1678,6 +1719,240 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
         "rgb(0, 60, 25, space = COLORSPACE_HSV)",
         dmasm::ByondVersion::new(515, 1637),
     );
+}
+
+/// Compile proc `name` on `ty` (empty for global procs).
+fn compiled_of(
+    code: &str,
+    ty: &str,
+    name: &str,
+    byond: dmasm::ByondVersion,
+) -> dmasm::compiler::CompiledProc {
+    let ctx = dreammaker::Context::default();
+    let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
+    let mut parser = dreammaker::Parser::new(&ctx, pp);
+    parser.enable_procs();
+    let tree = parser.parse_object_tree();
+    let ty = if ty.is_empty() {
+        tree.root()
+    } else {
+        tree.find(ty).unwrap()
+    };
+    let value = ty.get().procs.get(name).unwrap().value.last().unwrap();
+    let source = ProcSource {
+        tree: &tree,
+        ty,
+        name,
+        value,
+        file: "test.dm",
+        debug_info: false,
+        index: None,
+        byond,
+        file_names: None,
+    };
+    compile_proc(&source).unwrap()
+}
+
+fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> Vec<String> {
+    let compiled = compiled_of(code, ty, name, byond);
+    // Each BYOND bug also appears in the reload warnings.
+    for bug in &compiled.byond_bugs {
+        let text = match bug.line {
+            Some(line) => format!("line {}: {}", line, bug.text),
+            None => bug.text.clone(),
+        };
+        assert!(
+            compiled.warnings.iter().any(|w| w.starts_with(&text)),
+            "{:?}",
+            compiled.warnings
+        );
+    }
+    compiled.warnings
+}
+
+#[test]
+fn warnings_about_byonds_bugs_are_told_from_the_rest() {
+    let bugs = |code: &str, build| -> Vec<String> {
+        let compiled = compiled_of(code, "", "f", dmasm::ByondVersion::new(516, build));
+        compiled
+            .byond_bugs
+            .into_iter()
+            .map(|bug| bug.text)
+            .collect()
+    };
+    // BYOND bug reports omit dmasm workaround details.
+    let pointer = "/proc/f(list/L)\n\treturn *L[1]\n";
+    assert_eq!(
+        bugs(pointer, 1688),
+        [
+            "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a \
+          list of pointers"
+        ]
+    );
+    let weights = "/proc/f(a, b)\n\treturn pick(1; a, 0; b)\n";
+    assert_eq!(
+        bugs(weights, 1688),
+        ["pick() ends with a zero-weight entry, where DreamMaker's code jumps out of the proc"]
+    );
+    let divided = "/datum/proc/f(a, b = a.len/10)\n\treturn b\n";
+    let compiled = compiled_of(divided, "/datum", "f", dmasm::ByondVersion::new(516, 1688));
+    assert!(compiled.warnings[0].ends_with("leaves the division out; dmasm divides"));
+    assert!(compiled.byond_bugs[0]
+        .text
+        .ends_with("leaves the division out"));
+    // 516.1689 fixes the jump.
+    assert_eq!(bugs(weights, 1689), [] as [String; 0]);
+    // Compatibility differences do not count as BYOND bugs.
+    let wide = "/proc/f(a)\n\treturn (-1e10) ^ a\n";
+    assert_eq!(bugs(wide, 1688), [] as [String; 0]);
+    let compiled = compiled_of(wide, "", "f", dmasm::ByondVersion::new(516, 1688));
+    assert!(!compiled.warnings.is_empty());
+}
+
+#[test]
+fn code_that_byond_gets_wrong_is_warned_about() {
+    let latest = dmasm::ByondVersion::LATEST;
+    let v = |build| dmasm::ByondVersion::new(516, build);
+    let warned = |code: &str, ty: &str, name: &str, byond, what: &str| {
+        let w = warnings_of(code, ty, name, byond);
+        assert!(
+            w.iter().any(|w| w.contains(what)),
+            "{name} of {code:?} on {byond:?}: {w:?}"
+        );
+    };
+    let quiet = |code: &str, ty: &str, name: &str, byond| {
+        let w = warnings_of(code, ty, name, byond);
+        assert!(w.is_empty(), "{name} of {code:?} on {byond:?}: {w:?}");
+    };
+
+    // `continue LABEL` to a labelled do while inside a counted loop
+    let labelled = |outer: &str, go_on: &str| {
+        format!(
+            "/proc/f()\n\t{outer}\n\t\tvar/i = 0\n\t\tinner:\n\t\t\tdo\n\t\t\t\ti++\n\
+             \t\t\t\tif (i == 1)\n\t\t\t\t\t{go_on}\n\t\t\twhile (i < 2)\n"
+        )
+    };
+    let counted = "for (var/j in 1 to 2)";
+    warned(
+        &labelled(counted, "continue inner"),
+        "",
+        "f",
+        latest,
+        "line 8: `continue inner`",
+    );
+    warned(
+        &labelled("for (var/j = 1 to 2)", "continue inner"),
+        "",
+        "f",
+        latest,
+        "crashes the server",
+    );
+    quiet(&labelled(counted, "continue"), "", "f", latest);
+    quiet(&labelled(counted, "break inner"), "", "f", latest);
+    quiet(
+        &labelled("for (var/j in list(1, 2))", "continue inner"),
+        "",
+        "f",
+        latest,
+    );
+    // Labelled while loops are unaffected.
+    quiet(
+        "/proc/f()\n\tfor (var/j in 1 to 2)\n\t\tvar/i = 0\n\t\tinner:\n\t\t\twhile (i < 2)\n\
+         \t\t\t\ti++\n\t\t\t\tcontinue inner\n",
+        "",
+        "f",
+        latest,
+    );
+
+    // A loop over a list, a try, a loop over a list
+    let nested = |outer: &str, between: &str, inner: &str| {
+        format!(
+            "/proc/f()\n\t{outer}\n\t\ttry\n\t\t\t{between}\n\t\t\t\t{inner}\n\
+             \t\t\t\t\tthrow 1\n\t\tcatch\n\t\t\treturn\n"
+        )
+    };
+    let list = "for (var/a in list(1, 2))";
+    warned(
+        &nested(list, "if (1)", "for (var/b in list(1))"),
+        "",
+        "f",
+        latest,
+        "line 5: nested list loops separated by `try`",
+    );
+    warned(
+        &nested(list, "for (var/c in 1 to 2)", "for (var/k, v in list(1))"),
+        "",
+        "f",
+        latest,
+        "may end early, loop forever",
+    );
+    quiet(
+        &nested(list, "if (1)", "for (var/b in 1 to 2)"),
+        "",
+        "f",
+        latest,
+    );
+    quiet(
+        &nested("for (var/a in 1 to 2)", "if (1)", "for (var/b in list(1))"),
+        "",
+        "f",
+        latest,
+    );
+    // Catching inside the inner loop is safe, as is omitting try.
+    quiet(
+        "/proc/f()\n\tfor (var/a in list(1))\n\t\tfor (var/b in list(1))\n\t\t\ttry\n\
+         \t\t\t\tthrow 1\n\t\t\tcatch\n\t\t\t\treturn\n",
+        "",
+        "f",
+        latest,
+    );
+    quiet(
+        "/proc/f()\n\tfor (var/a in list(1))\n\t\tfor (var/b in list(1))\n\t\t\treturn\n",
+        "",
+        "f",
+        latest,
+    );
+
+    // A pointer in a list, read where it sits
+    let pointer = "/proc/f()\n\tvar/v\n\tvar/list/L = list(&v)\n\treturn *L[1]\n";
+    warned(pointer, "", "f", v(1668), "leaves the index out");
+    quiet(pointer, "", "f", v(1667));
+
+    // Overloads BYOND calls and then ignores, or doesn't call
+    let types = "/datum/t/proc/operator<<=(b)\n\treturn 1\n/datum/t/proc/operator>>=(b)\n\treturn 1\n\
+                 /datum/t/proc/operator++()\n\treturn 1\n/datum/t/proc/operator--()\n\treturn 1\n\
+                 /datum/t/proc/operator**(b)\n\treturn 1\n/datum/t/proc/operator*(b)\n\treturn 1\n\
+                 /datum/t/proc/operator<=>(b)\n\treturn 0\n/datum/t/proc/operator~=(b)\n\treturn 0\n\
+                 /datum/t/proc/operator~!(b)\n\treturn 1\n\
+                 /datum/t/proc/operator+=(b)\n\treturn 1\n\
+                 /datum/u/proc/operator**(b)\n\treturn 1\n\
+                 /area/x/Uncross(atom/movable/O)\n\treturn 0\n/turf/x/Uncross(atom/movable/O)\n\treturn 0\n";
+    for name in ["operator<<=", "operator>>="] {
+        warned(types, "/datum/t", name, latest, "discards the result");
+    }
+    warned(types, "/datum/t", "operator++", latest, "`a++` and `++a`");
+    warned(types, "/datum/t", "operator--", latest, "`a--` and `--a`");
+    warned(
+        types,
+        "/datum/t",
+        "operator**",
+        latest,
+        "calls `operator*(a)`",
+    );
+    quiet(types, "/datum/u", "operator**", latest);
+    quiet(types, "/datum/t", "operator*", latest);
+    quiet(types, "/datum/t", "operator+=", latest);
+    warned(types, "/datum/t", "operator<=>", v(1674), "list.Find(x)");
+    quiet(types, "/datum/t", "operator<=>", v(1673));
+    for name in ["operator~=", "operator~!"] {
+        warned(types, "/datum/t", name, v(1674), "discard the result");
+        warned(types, "/datum/t", name, v(1688), "discard the result");
+        quiet(types, "/datum/t", name, v(1673));
+        quiet(types, "/datum/t", name, v(1689));
+    }
+    warned(types, "/area/x", "Uncross", v(1683), "ignores the result");
+    quiet(types, "/area/x", "Uncross", v(1682));
+    quiet(types, "/turf/x", "Uncross", latest);
 }
 
 /// The warnings for global proc f of `code`, compiled for `byond`

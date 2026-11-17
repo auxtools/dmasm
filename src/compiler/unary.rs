@@ -67,6 +67,17 @@ fn emit_single(
                 EvalKind::Field(builder, field) => builder.get_field(DMString(field.into())),
 
                 EvalKind::ListRef => {
+                    // `*p[i]` read: DreamMaker leaves the index out, as in a write
+                    if op == UnaryOp::Dereference
+                        && compiler
+                            .byond
+                            .at_least(super::versions::POINTER_INDEX_DROPPED)
+                    {
+                        compiler.warn_bug(
+                            super::statements::POINTER_INDEX_BUG,
+                            super::statements::POINTER_INDEX_OURS,
+                        );
+                    }
                     compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
                     compiler.emit_ins(Instruction::SetVar(Variable::Cache));
                     Variable::CacheIndex

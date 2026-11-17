@@ -33,7 +33,7 @@ Set `ProcSource::byond`, `compile_expr_for` or `reload::ParseOptions::byond` to 
 running world's build. `ByondVersion::read_as` configures version-specific parsing.
 Compatibility rules and thresholds are in `src/compiler/versions.rs`.
 
-Probes covered 515.1637, 515.1647, 516.1659, 516.1685 and 516.1688. Additional probes
+Probes covered 515.1637, 515.1647, 516.1659, 516.1685, 516.1688 and 516.1689. Additional probes
 located behavior changes across 515.1637–516.1660, and in 516.1664, 1668–1672, 1676,
 1681 and 1684.
 
@@ -111,7 +111,7 @@ receiver for `a.b.x`. dmasm matches these reuse and invalidation rules.
 | Empty proc at a file's end | Names the next included file in debug info | Uses the proc's source file |
 | `*p[i] = x` from 516.1668 | Drops the index and writes through the cache | Writes the indexed element |
 | Out-of-range constants in `&`, `\|`, `^`, `<<`, `>>` | Inconsistent, build-dependent 24-bit conversion | Uses the low 24 bits of the nearest 32-bit integer |
-| `pick()` ending in a zero-weight entry | Jumps outside the proc if no earlier entry is selected | Selects the last entry whose weight is not a constant zero |
+| `pick()` ending in a zero-weight entry, before 516.1689 | Jumps outside the proc if no earlier entry is selected | Selects the last entry whose weight is not a constant zero |
 
 Hexadecimal literals longer than eight digits and octal literals exceeding i32
 are rejected. DreamMaker's conversion is unusual (`0x100000000` becomes `2**60`)
@@ -175,9 +175,16 @@ lookahead line early, its bytecode can stop a statement sooner.
 `CompiledProc::warnings` reports intentional behavior differences and significant
 DreamMaker quirks retained for compatibility. Reload forwards these diagnostics.
 
+`CompiledProc::byond_bugs` contains warnings about bugs affecting DreamMaker
+builds, excluding dmasm workaround details and compatibility-only differences.
+It includes the bugs below, parameter-default division, safe-call receivers,
+logical assignment before 516.1673, indexed pointers from 516.1668, the copied
+quirks, and zero-weight `pick()` endings before 516.1689.
+`Snapshot::known_bugs` collects these across the project for `auxtools check`.
+
 Warnings cover parameter-default division, safe-call receivers, logical assignment
 before 516.1673, indexed pointer assignment from 516.1668, out-of-range bit operands,
-zero-weight `pick()` endings, and platform-sensitive angle/color folding.
+zero-weight `pick()` endings before 516.1689, and platform-sensitive angle/color folding.
 
 Two copied quirks also warn:
 
@@ -190,6 +197,22 @@ After `a.b.f()`, DreamMaker keeps `a.b` cached: a later `a.b.x` in the same
 flow uses the old object even if `f()` replaced `a.b`. dmasm preserves this
 behavior without warning because the pattern is common and only matters when
 the call replaces the field. Read the field into a local when a call may replace it.
+
+The following bugs affect both DreamMaker builds and reloads
+(`compiler/known_bugs.rs`):
+
+- `continue LABEL` to a labelled `do` ... `while` inside a counted `for` loop
+  crashes the server.
+- Nested list loops separated by `try`: catching an inner-loop error makes
+  the outer loop use the inner iterator. It can end early, loop forever or crash.
+- `operator<<=` and `operator>>=`: the result is discarded. `operator++` and
+  `operator--`: as a statement, called without an argument and the result
+  discarded. `operator**` on a type with `operator*`: `a ** 2` calls `operator*`.
+- `operator<=>` from 516.1674: `list.Find()` and `list ^ x` call it, and from
+  516.1689 take 0 for a match. `operator~=` and `operator~!` in 516.1674 to
+  516.1688: the result is discarded.
+- `Uncross()` of an area from 516.1683: the result is ignored.
+- `*p[i]` read from 516.1668, as for its assignment above.
 
 Debug-location and encoding-only differences do not warn. In the validation corpora,
 most warnings are tgstation parameter-default divisions; older builds also expose
