@@ -130,7 +130,7 @@ dependencies = [
 [[package]]
 name = "dreammaker"
 version = "0.1.0"
-source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4fcd9bc6dfebb21a630579050d6f67315d71b504"
+source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4695e9f7205415e2eef02b9cb07cae84703f3b48"
 dependencies = [
  "beef",
  "bitflags",
@@ -152,7 +152,7 @@ dependencies = [
 [[package]]
 name = "dreammaker-macros"
 version = "0.0.0"
-source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4fcd9bc6dfebb21a630579050d6f67315d71b504"
+source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4695e9f7205415e2eef02b9cb07cae84703f3b48"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -229,7 +229,7 @@ checksum = "71dd52191aae121e8611f1e8dc3e324dd0dd1dee1e6dd91d10ee07a3cfb4d9d8"
 [[package]]
 name = "interval-tree"
 version = "0.8.0"
-source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4fcd9bc6dfebb21a630579050d6f67315d71b504"
+source = "git+https://github.com/auxtools/SpacemanDMM?branch=master#4695e9f7205415e2eef02b9cb07cae84703f3b48"
 
 [[package]]
 name = "libc"

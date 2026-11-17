@@ -1923,6 +1923,7 @@ fn code_that_byond_gets_wrong_is_warned_about() {
                  /datum/t/proc/operator++()\n\treturn 1\n/datum/t/proc/operator--()\n\treturn 1\n\
                  /datum/t/proc/operator**(b)\n\treturn 1\n/datum/t/proc/operator*(b)\n\treturn 1\n\
                  /datum/t/proc/operator<=>(b)\n\treturn 0\n/datum/t/proc/operator~=(b)\n\treturn 0\n\
+                 /datum/t/proc/operator~!(b)\n\treturn 1\n\
                  /datum/t/proc/operator+=(b)\n\treturn 1\n\
                  /datum/u/proc/operator**(b)\n\treturn 1\n\
                  /area/x/Uncross(atom/movable/O)\n\treturn 0\n/turf/x/Uncross(atom/movable/O)\n\treturn 0\n";
@@ -1943,23 +1944,12 @@ fn code_that_byond_gets_wrong_is_warned_about() {
     quiet(types, "/datum/t", "operator+=", latest);
     warned(types, "/datum/t", "operator<=>", v(1674), "list.Find(x)");
     quiet(types, "/datum/t", "operator<=>", v(1673));
-    // The pinned parser does not yet accept operator~! definitions.
-    warned(
-        types,
-        "/datum/t",
-        "operator~=",
-        v(1674),
-        "discard the result",
-    );
-    warned(
-        types,
-        "/datum/t",
-        "operator~=",
-        v(1688),
-        "discard the result",
-    );
-    quiet(types, "/datum/t", "operator~=", v(1673));
-    quiet(types, "/datum/t", "operator~=", v(1689));
+    for name in ["operator~=", "operator~!"] {
+        warned(types, "/datum/t", name, v(1674), "discard the result");
+        warned(types, "/datum/t", name, v(1688), "discard the result");
+        quiet(types, "/datum/t", name, v(1673));
+        quiet(types, "/datum/t", name, v(1689));
+    }
     warned(types, "/area/x", "Uncross", v(1683), "ignores the result");
     quiet(types, "/area/x", "Uncross", v(1682));
     quiet(types, "/turf/x", "Uncross", latest);
