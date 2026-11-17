@@ -73,7 +73,10 @@ fn emit_single(
                             .byond
                             .at_least(super::versions::POINTER_INDEX_DROPPED)
                     {
-                        compiler.warn(super::statements::POINTER_INDEX_WARNING);
+                        compiler.warn_bug(
+                            super::statements::POINTER_INDEX_BUG,
+                            super::statements::POINTER_INDEX_OURS,
+                        );
                     }
                     compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
                     compiler.emit_ins(Instruction::SetVar(Variable::Cache));

@@ -762,9 +762,12 @@ fn emit_overloaded(
                     compiler.emit_ins(Instruction::PushInt(result as i32));
                     // Only affected builds read the previous test flag after folding.
                     if !super::versions::clean_nan_fold(compiler.byond) {
-                        compiler.warn(&format!(
-                            "{name}() of a constant returns the previous test flag on this build, matching DreamMaker"
-                        ));
+                        compiler.warn_bug(
+                            &format!(
+                                "{name}() of a constant returns the previous test flag on this build"
+                            ),
+                            ", matching DreamMaker",
+                        );
                         compiler.emit_ins(Instruction::GetFlag);
                     }
                     return Ok(Some(EvalKind::Stack));

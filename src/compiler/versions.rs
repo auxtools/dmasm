@@ -35,6 +35,9 @@ pub(super) const SAFE_LOGICAL_ASSIGN: u32 = 1673;
 /// First build dropping the index in `*p[i] = x`. dmasm writes the element
 /// and warns about the difference.
 pub(super) const POINTER_INDEX_DROPPED: u32 = 1668;
+/// First build whose DreamMaker keeps the entry of a `pick()` that ends with
+/// a constant zero weight, where earlier ones jump outside the proc.
+pub(super) const PICK_ZERO_WEIGHT_KEPT: u32 = 1689;
 
 /// The first build with `__PROC__`.
 pub(super) const PROC_MACRO: u32 = 1644;

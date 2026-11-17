@@ -407,9 +407,23 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     let mut last = args.len() - 1;
                     if zero[last] {
                         if let Some(live) = zero.iter().rposition(|z| !z) {
-                            compiler.warn(
-                                "pick() ends with a zero-weight entry; dmasm selects the last entry whose weight is not a constant zero instead of reproducing DreamMaker's invalid jump",
-                            );
+                            let bug = "pick() ends with a zero-weight entry";
+                            let ours = "; dmasm selects the last entry whose weight is not a constant zero instead of reproducing DreamMaker's invalid jump";
+                            // 516.1689 fixes the invalid jump; later differences
+                            // are compatibility warnings, not BYOND bugs.
+                            if compiler
+                                .byond
+                                .at_least(super::versions::PICK_ZERO_WEIGHT_KEPT)
+                            {
+                                compiler.warn(&format!("{bug}{ours}"));
+                            } else {
+                                compiler.warn_bug(
+                                    &format!(
+                                        "{bug}, where DreamMaker's code jumps out of the proc"
+                                    ),
+                                    ours,
+                                );
+                            }
                             last = live;
                         }
                     }

@@ -13,7 +13,7 @@ mod known_bugs;
 mod procs;
 mod statements;
 
-pub use procs::{compile_proc, CompiledProc, ProcSource, StaticLocal};
+pub use procs::{compile_proc, ByondBug, CompiledProc, ProcSource, StaticLocal};
 pub(crate) use procs::{compile_proc_as, labels_mut, new_tree, proc_path};
 
 mod args;
@@ -755,6 +755,8 @@ struct Compiler<'a> {
     /// Compatibility warnings (see `CompiledProc::warnings`). Interior
     /// mutability allows constant folding to report warnings through `&self`.
     warnings: std::cell::RefCell<Vec<String>>,
+    /// Warnings about bugs in BYOND, independent of dmasm compatibility.
+    byond_bugs: std::cell::RefCell<Vec<ByondBug>>,
     /// The element type of the `/list/T` var a follow starts from, for its
     /// first index. Taken by `follow::emit_typed`.
     list_elem_type: Option<dreammaker::objtree::TypeRef<'a>>,
@@ -789,6 +791,7 @@ impl<'a> Compiler<'a> {
             skip_compound: false,
             place: false,
             warnings: Default::default(),
+            byond_bugs: Default::default(),
             proc_macro_ok: false,
             no_fold: false,
             live_only: false,
@@ -1417,21 +1420,37 @@ impl<'a> Compiler<'a> {
         }));
     }
 
-    /// Record a warning once for the current source line.
+    /// Record a compatibility warning once per source line.
     fn warn(&self, text: &str) {
-        let text = match self.last_line {
+        self.record(self.last_line, text, None);
+    }
+
+    /// Record a BYOND bug once per source line. Append `ours` only to the
+    /// reload warning, where differences in generated code matter.
+    fn warn_bug(&self, bug: &str, ours: &str) {
+        self.record(self.last_line, &format!("{bug}{ours}"), Some(bug));
+    }
+
+    /// Record a BYOND bug once for `line`.
+    fn warn_at(&self, line: u32, text: &str) {
+        self.record(Some(line), text, Some(text));
+    }
+
+    fn record(&self, line: Option<u32>, text: &str, byond_bug: Option<&str>) {
+        if let Some(bug) = byond_bug {
+            let bug = ByondBug {
+                line,
+                text: bug.to_owned(),
+            };
+            let mut bugs = self.byond_bugs.borrow_mut();
+            if !bugs.contains(&bug) {
+                bugs.push(bug);
+            }
+        }
+        let text = match line {
             Some(line) => format!("line {line}: {text}"),
             None => text.to_owned(),
         };
-        let mut warnings = self.warnings.borrow_mut();
-        if !warnings.contains(&text) {
-            warnings.push(text);
-        }
-    }
-
-    /// Record a warning once for `line`.
-    fn warn_at(&self, line: u32, text: &str) {
-        let text = format!("line {line}: {text}");
         let mut warnings = self.warnings.borrow_mut();
         if !warnings.contains(&text) {
             warnings.push(text);

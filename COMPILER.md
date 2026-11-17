@@ -175,6 +175,15 @@ lookahead line early, its bytecode can stop a statement sooner.
 `CompiledProc::warnings` reports intentional behavior differences and significant
 DreamMaker quirks retained for compatibility. Reload forwards these diagnostics.
 
+`CompiledProc::byond_bugs` has those of them that are about code BYOND itself gets
+wrong, where a world DreamMaker built misbehaves too: the code under "BYOND itself
+gets wrong" below, parameter-default division, safe-call receivers, logical
+assignment before 516.1673, indexed pointers from 516.1668, the two copied quirks,
+and a zero-weight `pick()` ending before 516.1689. The rest (out-of-range bit
+operands, platform-sensitive folding, a path DreamMaker refuses) is about dmasm's
+code or DreamMaker's platforms. A bug's text says what BYOND does and leaves out
+what dmasm's code does about it, which ends the warning.
+
 Warnings cover parameter-default division, safe-call receivers, logical assignment
 before 516.1673, indexed pointer assignment from 516.1668, out-of-range bit operands,
 zero-weight `pick()` endings, and platform-sensitive angle/color folding.

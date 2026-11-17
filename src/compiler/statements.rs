@@ -55,11 +55,14 @@ pub(super) fn emit_proc_body(
         compiler.emit_ins(Instruction::Jz(Label::Named(skip.clone())));
         compiler.emit_ins(Instruction::DbgLine(param.location.line));
         if path_division(default) {
-            compiler.warn(&format!(
-                "parameter {}'s default divides a var by a number: written without spaces \
-                 (`a.b/10`), DreamMaker reads it as a path and leaves the division out; dmasm divides",
-                param.name
-            ));
+            compiler.warn_bug(
+                &format!(
+                    "parameter {}'s default divides a var by a number: written without spaces \
+                     (`a.b/10`), DreamMaker reads it as a path and leaves the division out",
+                    param.name
+                ),
+                "; dmasm divides",
+            );
         }
         // `x = a in L` is the default a, with L what a verb's argument is
         // picked from: the `in` isn't the default's
@@ -1731,8 +1734,9 @@ pub(super) fn emit_safe_chain_write(
                 .iter()
                 .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
             {
-                compiler.warn(
-                    "safe-call arguments overwrite the receiver cache in DreamMaker; dmasm calls the proc on its receiver",
+                compiler.warn_bug(
+                    "safe-call arguments overwrite the receiver cache in DreamMaker",
+                    "; dmasm calls the proc on its receiver",
                 );
                 compiler
                     .nodes
@@ -1822,10 +1826,7 @@ pub(super) fn emit_safe_chain_write(
                 .byond
                 .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
             {
-                compiler.warn(
-                    "`?.` in `||=` or `&&=`: before 516.1673 DreamMaker leaves out its null tests (a runtime \
-                 error on null, and the first object's var with two `?.`); dmasm keeps them",
-                );
+                compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
             }
             let restore_first =
                 index.is_none() || compiler.byond.at_least(super::versions::SAFE_ELEMENT_CACHE);
@@ -2453,10 +2454,7 @@ pub(super) fn emit_safe_logical_assign(
         .byond
         .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
     {
-        compiler.warn(
-            "`?.` in `||=` or `&&=`: before 516.1673 DreamMaker leaves out its null tests (a runtime \
-                 error on null, and the first object's var with two `?.`); dmasm keeps them",
-        );
+        compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
     }
     let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
     for f in &fields[..fields.len() - 1] {
@@ -2527,16 +2525,24 @@ fn warn_list_from_cache(compiler: &Compiler) {
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
     {
-        compiler.warn(
-            "before 516.1685, safe list assignment resolves the list using the RHS cache value, matching DreamMaker",
+        compiler.warn_bug(
+            "before 516.1685, safe list assignment resolves the list using the RHS cache value",
+            ", matching DreamMaker",
         );
     }
 }
 
-/// What `*p[i]` gets in place of DreamMaker's code
-pub(super) const POINTER_INDEX_WARNING: &str =
+/// What DreamMaker's code does with `*p[i]`, and what `*p[i]` gets in its
+/// place
+pub(super) const POINTER_INDEX_BUG: &str =
     "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a list of \
-     pointers; dmasm dereferences the indexed element";
+     pointers";
+pub(super) const POINTER_INDEX_OURS: &str = "; dmasm dereferences the indexed element";
+
+/// `a?.b ||= c` before 516.1673
+const SAFE_LOGICAL_BUG: &str =
+    "`?.` in `||=` or `&&=`: before 516.1673 DreamMaker leaves out its null tests (a runtime \
+     error on null, and the first object's var with two `?.`)";
 
 /// `*p[i] = x`: from 516.1668 DreamMaker leaves the index out
 pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
@@ -2549,7 +2555,7 @@ pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
                 .iter()
                 .any(|f| matches!(f.elem, Follow::Unary(UnaryOp::Dereference)))
         {
-            compiler.warn(POINTER_INDEX_WARNING);
+            compiler.warn_bug(POINTER_INDEX_BUG, POINTER_INDEX_OURS);
         }
     }
 }

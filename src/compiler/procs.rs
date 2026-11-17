@@ -42,6 +42,17 @@ pub struct CompiledProc {
     pub statics: Vec<StaticLocal>,
     /// Compatibility warnings; see COMPILER.md.
     pub warnings: Vec<String>,
+    /// Known bugs affecting DreamMaker builds as well as reloads.
+    pub byond_bugs: Vec<ByondBug>,
+}
+
+/// A known BYOND bug detected in source code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ByondBug {
+    /// Source line, if known.
+    pub line: Option<u32>,
+    /// What BYOND does with the code.
+    pub text: String,
 }
 
 /// A static local: a global the world sets up when it starts.
@@ -238,6 +249,7 @@ pub(crate) fn compile_proc_as(
     let ctx = compiler.proc.take().unwrap();
     Ok(CompiledProc {
         warnings: compiler.warnings.into_inner(),
+        byond_bugs: compiler.byond_bugs.into_inner(),
         nodes: compiler.nodes,
         locals: ctx.locals,
         params,

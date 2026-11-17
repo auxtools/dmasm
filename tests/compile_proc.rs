@@ -1681,7 +1681,12 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
 }
 
 /// Compile proc `name` on `ty` (empty for global procs).
-fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> Vec<String> {
+fn compiled_of(
+    code: &str,
+    ty: &str,
+    name: &str,
+    byond: dmasm::ByondVersion,
+) -> dmasm::compiler::CompiledProc {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -1704,7 +1709,61 @@ fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> 
         byond,
         file_names: None,
     };
-    compile_proc(&source).unwrap().warnings
+    compile_proc(&source).unwrap()
+}
+
+fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> Vec<String> {
+    let compiled = compiled_of(code, ty, name, byond);
+    // Each BYOND bug also appears in the reload warnings.
+    for bug in &compiled.byond_bugs {
+        let text = match bug.line {
+            Some(line) => format!("line {}: {}", line, bug.text),
+            None => bug.text.clone(),
+        };
+        assert!(
+            compiled.warnings.iter().any(|w| w.starts_with(&text)),
+            "{:?}",
+            compiled.warnings
+        );
+    }
+    compiled.warnings
+}
+
+#[test]
+fn warnings_about_byonds_bugs_are_told_from_the_rest() {
+    let bugs = |code: &str, build| -> Vec<String> {
+        let compiled = compiled_of(code, "", "f", dmasm::ByondVersion::new(516, build));
+        assert!(!compiled.warnings.is_empty(), "{}", code);
+        compiled
+            .byond_bugs
+            .into_iter()
+            .map(|bug| bug.text)
+            .collect()
+    };
+    // BYOND bug reports omit dmasm workaround details.
+    let pointer = "/proc/f(list/L)\n\treturn *L[1]\n";
+    assert_eq!(
+        bugs(pointer, 1688),
+        [
+            "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a \
+          list of pointers"
+        ]
+    );
+    let weights = "/proc/f(a, b)\n\treturn pick(1; a, 0; b)\n";
+    assert_eq!(
+        bugs(weights, 1688),
+        ["pick() ends with a zero-weight entry, where DreamMaker's code jumps out of the proc"]
+    );
+    let divided = "/datum/proc/f(a, b = a.len/10)\n\treturn b\n";
+    let compiled = compiled_of(divided, "/datum", "f", dmasm::ByondVersion::new(516, 1688));
+    assert!(compiled.warnings[0].ends_with("leaves the division out; dmasm divides"));
+    assert!(compiled.byond_bugs[0]
+        .text
+        .ends_with("leaves the division out"));
+    // Compatibility differences do not count as BYOND bugs.
+    assert_eq!(bugs(weights, 1689), [] as [String; 0]);
+    let wide = "/proc/f(a)\n\treturn (-1e10) ^ a\n";
+    assert_eq!(bugs(wide, 1688), [] as [String; 0]);
 }
 
 #[test]
