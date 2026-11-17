@@ -191,6 +191,22 @@ flow uses the old object even if `f()` replaced `a.b`. dmasm preserves this
 behavior without warning because the pattern is common and only matters when
 the call replaces the field. Read the field into a local when a call may replace it.
 
+The following bugs affect both DreamMaker builds and reloads
+(`compiler/known_bugs.rs`):
+
+- `continue LABEL` to a labelled `do` ... `while` inside a counted `for` loop
+  crashes the server.
+- Nested list loops separated by `try`: catching an inner-loop error makes
+  the outer loop use the inner iterator. It can end early, loop forever or crash.
+- `operator<<=` and `operator>>=`: the result is discarded. `operator++` and
+  `operator--`: as a statement, called without an argument and the result
+  discarded. `operator**` on a type with `operator*`: `a ** 2` calls `operator*`.
+- `operator<=>` from 516.1674: `list.Find()` and `list ^ x` call it, and from
+  516.1689 take 0 for a match. `operator~=` and `operator~!` in 516.1674 to
+  516.1688: the result is discarded.
+- `Uncross()` of an area from 516.1683: the result is ignored.
+- `*p[i]` read from 516.1668, as for its assignment above.
+
 Debug-location and encoding-only differences do not warn. In the validation corpora,
 most warnings are tgstation parameter-default divisions; older builds also expose
 the safe-list-assignment quirk.

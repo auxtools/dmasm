@@ -25,6 +25,7 @@ pub(super) fn emit_proc_body(
         .unwrap_or(source.value.location.line + 1);
 
     compiler.emit_ins(Instruction::DbgLine(first_line));
+    super::known_bugs::check(compiler, source, code);
     let mut scan = LabelScan::default();
     label_iterators(code, 0, &mut scan);
     // Treat a bare name targeted by goto as a label, unless `name:` declares it.
@@ -2532,6 +2533,11 @@ fn warn_list_from_cache(compiler: &Compiler) {
     }
 }
 
+/// What `*p[i]` gets in place of DreamMaker's code
+pub(super) const POINTER_INDEX_WARNING: &str =
+    "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a list of \
+     pointers; dmasm dereferences the indexed element";
+
 /// `*p[i] = x`: from 516.1668 DreamMaker leaves the index out
 pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
     if let Expression::Base { follow, .. } = strip_parens(place) {
@@ -2543,9 +2549,7 @@ pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
                 .iter()
                 .any(|f| matches!(f.elem, Follow::Unary(UnaryOp::Dereference)))
         {
-            compiler.warn(
-                "`*p[i] = x`: from 516.1668 DreamMaker leaves the index out; dmasm writes the indexed element",
-            );
+            compiler.warn(POINTER_INDEX_WARNING);
         }
     }
 }

@@ -9,6 +9,7 @@ use crate::{ByondVersion, Node};
 
 mod assignment;
 mod fold;
+mod known_bugs;
 mod procs;
 mod statements;
 
@@ -1422,6 +1423,15 @@ impl<'a> Compiler<'a> {
             Some(line) => format!("line {line}: {text}"),
             None => text.to_owned(),
         };
+        let mut warnings = self.warnings.borrow_mut();
+        if !warnings.contains(&text) {
+            warnings.push(text);
+        }
+    }
+
+    /// Record a warning once for `line`.
+    fn warn_at(&self, line: u32, text: &str) {
+        let text = format!("line {line}: {text}");
         let mut warnings = self.warnings.borrow_mut();
         if !warnings.contains(&text) {
             warnings.push(text);
