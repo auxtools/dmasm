@@ -604,6 +604,26 @@ impl Changes {
     }
 }
 
+/// A known BYOND bug with its source location (`Snapshot::known_bugs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownBug {
+    /// Proc source file, relative to the `.dme` directory.
+    pub file: String,
+    pub line: Option<u32>,
+    pub proc: ProcKey,
+    /// What BYOND does with the code.
+    pub text: String,
+}
+
+/// Project diagnostics from `Snapshot::known_bugs`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnownBugs {
+    /// Findings sorted by file, line and proc.
+    pub bugs: Vec<KnownBug>,
+    /// Unchecked procs as (proc, source file, compiler error).
+    pub not_checked: Vec<(ProcKey, String, String)>,
+}
+
 /// How to parse a `.dme`.
 #[derive(Debug, Clone, Default)]
 pub struct ParseOptions {
@@ -1436,6 +1456,30 @@ impl Snapshot {
             Ok(Err(e)) => Err(e.to_string()),
             Err(_) => Err("the compiler panicked".to_owned()),
         }
+    }
+
+    /// Compile every proc and collect known BYOND bugs and compilation failures.
+    pub fn known_bugs(&self) -> KnownBugs {
+        let mut found = KnownBugs::default();
+        for key in self.procs() {
+            let file = self.proc_file(key).unwrap_or_default();
+            match self.compile(key) {
+                Ok(compiled) => found
+                    .bugs
+                    .extend(compiled.byond_bugs.into_iter().map(|bug| KnownBug {
+                        file: file.clone(),
+                        line: bug.line,
+                        proc: key.clone(),
+                        text: bug.text,
+                    })),
+                Err(error) => found.not_checked.push((key.clone(), file, error)),
+            }
+        }
+        found
+            .bugs
+            .sort_by(|a, b| (&a.file, a.line, &a.proc).cmp(&(&b.file, b.line, &b.proc)));
+        found.not_checked.sort();
+        found
     }
 
     /// Return unresolved parse errors, excluding recovered const initializers and
