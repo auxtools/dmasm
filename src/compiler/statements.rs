@@ -1751,9 +1751,7 @@ pub(super) fn emit_safe_chain_write(
         compiler.emit_move_to_stack(kind)?;
         // Restore the receiver after evaluating arguments.
         if let Some(call) = call_after_cache_use(compiler, start) {
-            compiler.warn(
-                "safe-call arguments overwrite the receiver cache in DreamMaker; dmasm calls the proc on its receiver",
-            );
+            compiler.warn_bug(SAFE_RECEIVER_BUG, "; dmasm calls the proc on a");
             compiler
                 .nodes
                 .insert(call, Node::Instruction(Instruction::PushCache, ()));
@@ -1763,6 +1761,7 @@ pub(super) fn emit_safe_chain_write(
         }
     }
     let implicit = place.and_then(|p| compiler.static_type_name(p));
+    let value_start = compiler.nodes.len();
     if let (Some(value), false) = (value, matches!(write, SafeWrite::Logical { .. })) {
         compiler.implicit_type = implicit.clone();
         emit_value(compiler, value)?;
@@ -1787,6 +1786,9 @@ pub(super) fn emit_safe_chain_write(
         // Evaluate the value before the final receiver, then write its field
         // or element and restore the holder.
         let (computed, fields) = computed;
+        let value_used_cache = compiler.nodes[value_start..]
+            .iter()
+            .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)));
         let copies = match &write {
             SafeWrite::Assign => true,
             SafeWrite::Change(write) => {
@@ -1797,9 +1799,14 @@ pub(super) fn emit_safe_chain_write(
         if value_form && copies {
             compiler.emit_ins(Instruction::PushTop);
         }
+        let start = compiler.nodes.len();
         let kind =
             super::follow::emit_typed(compiler, computed, EvalKind::Var(Variable::Cache), None)?;
         compiler.emit_move_to_stack(kind)?;
+        // DreamMaker uses the receiver left by the value or call arguments.
+        if value_used_cache || call_after_cache_use(compiler, start).is_some() {
+            compiler.warn_bug(SAFE_RECEIVER_BUG, ", matching DreamMaker");
+        }
         let mut var = None;
         if !fields.is_empty() {
             compiler.emit_ins(Instruction::SetVar(Variable::Cache));
@@ -2642,6 +2649,11 @@ pub(super) const POINTER_INDEX_BUG: &str =
     "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a list of \
      pointers";
 pub(super) const POINTER_INDEX_OURS: &str = "; dmasm dereferences the indexed element";
+
+/// `a?.f(b.x).v = b.y`
+const SAFE_RECEIVER_BUG: &str =
+    "writes through `?.` chains (`a?.f(b.x).v = b.y`): DreamMaker uses \
+     the receiver left by the arguments or assigned value (b)";
 
 /// `a?.b ||= c` before 516.1673
 const SAFE_LOGICAL_BUG: &str =

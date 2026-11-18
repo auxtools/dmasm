@@ -2123,7 +2123,21 @@ fn deliberate_differences_and_copied_quirks_are_warned_about() {
     warned(
         &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g(b?.n)?.n = 1\n"),
         latest,
-        "on its receiver",
+        "dmasm calls the proc on a",
+    );
+    warned(
+        &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g().n = b.n\n"),
+        latest,
+        "the receiver left by the arguments or assigned value (b), matching DreamMaker",
+    );
+    warned(
+        &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g(b.n).n = 1\n"),
+        latest,
+        "matching DreamMaker",
+    );
+    quiet(
+        &format!("{types}/proc/f(datum/t/a, b)\n\ta?.g().n = b\n"),
+        latest,
     );
     warned(
         &format!("{types}/proc/f(datum/t/a)\n\ta?.n ||= 1\n"),
