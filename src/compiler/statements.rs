@@ -1630,7 +1630,7 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     }
     let last = segments.pop()?;
     let calls = |s: &Vec<Follow>| s.iter().filter(|f| matches!(f, Follow::Call(..))).count();
-    if segments.iter().any(|s| calls(s) > 1) || calls(&last) > 0 {
+    if segments.iter().any(|s| calls(s) > 1) {
         return None;
     }
     Some(SafeChain {
@@ -1667,24 +1667,49 @@ impl SafeChain {
             .collect()
     }
 
+    /// Split the last segment after its final call or index, before trailing fields.
+    fn computed(&self) -> (Vec<Follow>, Vec<String>) {
+        let split = self
+            .last
+            .iter()
+            .rposition(|f| !matches!(f, Follow::Field(..)))
+            .map_or(0, |i| i + 1);
+        let fields = self.last[split..]
+            .iter()
+            .map(|f| match f {
+                Follow::Field(_, name) => name.to_string(),
+                _ => unreachable!(),
+            })
+            .collect();
+        (self.last[..split].to_vec(), fields)
+    }
+
     /// Whether `write` can be done to the place, in a statement or for its
     /// value.
     pub fn writable(&self, write: &SafeWrite, value_form: bool) -> bool {
         match (self.fields(), write) {
             (Some(_), SafeWrite::Assign) => self.index.is_some(),
             (Some(_), SafeWrite::Change(_)) => true,
-            // `a?.L[k].x`: the last segment is read before the field it ends
-            // with is written
-            (None, SafeWrite::Change(_)) => {
-                !value_form
-                    && self.index.is_none()
-                    && matches!(self.last.last(), Some(Follow::Field(..)))
-            }
-            (None, SafeWrite::Assign) => false,
             (Some(_), SafeWrite::Logical { .. }) => !value_form,
-            (None, SafeWrite::Logical { .. }) => false,
+            // `a?.f().x`, `a?.L[k].x[i]`: a call's result isn't a place
+            (None, SafeWrite::Assign) => self.index.is_some(),
+            (None, _) => {
+                self.index.is_some() || matches!(self.last.last(), Some(Follow::Field(..)))
+            }
         }
     }
+}
+
+/// Find the first call after `start` if its arguments changed the receiver cache.
+fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
+    let call = start
+        + compiler.nodes[start..]
+            .iter()
+            .position(|n| matches!(n, Node::Instruction(Instruction::Call(..), _)))?;
+    compiler.nodes[start..call]
+        .iter()
+        .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
+        .then_some(call)
 }
 
 /// Write through a safe-access chain with its initial receiver on the stack.
@@ -1701,6 +1726,7 @@ pub(super) fn emit_safe_chain_write(
     value_form: bool,
 ) -> Result<(), CompileError> {
     let fields = chain.fields();
+    let computed = chain.computed();
     let jump = |end: &str| {
         let end = Label::Named(end.to_owned());
         if value_form {
@@ -1723,28 +1749,17 @@ pub(super) fn emit_safe_chain_write(
         let kind =
             super::follow::emit_typed(compiler, segment, EvalKind::Var(Variable::Cache), None)?;
         compiler.emit_move_to_stack(kind)?;
-        // DM calls the proc on whatever the arguments left in the cache; we
-        // put the receiver back first
-        let call = compiler.nodes[start..]
-            .iter()
-            .position(|n| matches!(n, Node::Instruction(Instruction::Call(..), _)));
-        if let Some(call) = call {
-            let call = start + call;
-            if compiler.nodes[start..call]
-                .iter()
-                .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-            {
-                compiler.warn_bug(
-                    "safe-call arguments overwrite the receiver cache in DreamMaker",
-                    "; dmasm calls the proc on its receiver",
-                );
-                compiler
-                    .nodes
-                    .insert(call, Node::Instruction(Instruction::PushCache, ()));
-                compiler
-                    .nodes
-                    .insert(call, Node::Instruction(Instruction::PopCache, ()));
-            }
+        // Restore the receiver after evaluating arguments.
+        if let Some(call) = call_after_cache_use(compiler, start) {
+            compiler.warn(
+                "safe-call arguments overwrite the receiver cache in DreamMaker; dmasm calls the proc on its receiver",
+            );
+            compiler
+                .nodes
+                .insert(call, Node::Instruction(Instruction::PushCache, ()));
+            compiler
+                .nodes
+                .insert(call, Node::Instruction(Instruction::PopCache, ()));
         }
     }
     let implicit = place.and_then(|p| compiler.static_type_name(p));
@@ -1768,30 +1783,119 @@ pub(super) fn emit_safe_chain_write(
             fields[fields.len() - 1].clone().into_bytes(),
         ))
     };
-    match (fields, write, chain.index) {
-        (None, SafeWrite::Change(write), None) => {
-            let mut prefix = chain.last;
-            let Some(Follow::Field(_, field)) = prefix.pop() else {
-                unreachable!()
-            };
-            let kind =
-                super::follow::emit_typed(compiler, prefix, EvalKind::Var(Variable::Cache), None)?;
-            compiler.emit_move_to_stack(kind)?;
-            compiler.emit_ins(Instruction::SetVar(Variable::Cache));
-            for ins in write(field_var(&[field.to_string()])) {
-                compiler.emit_ins(ins);
+    let Some(fields) = fields else {
+        // Evaluate the value before the final receiver, then write its field
+        // or element and restore the holder.
+        let (computed, fields) = computed;
+        let copies = match &write {
+            SafeWrite::Assign => true,
+            SafeWrite::Change(write) => {
+                matches!(write(Variable::Cache)[..], [Instruction::SetVarExpr(_)])
             }
-            compiler.emit_ins(Instruction::PopCache);
+            SafeWrite::Logical { .. } => false,
+        };
+        if value_form && copies {
+            compiler.emit_ins(Instruction::PushTop);
+        }
+        let kind =
+            super::follow::emit_typed(compiler, computed, EvalKind::Var(Variable::Cache), None)?;
+        compiler.emit_move_to_stack(kind)?;
+        let mut var = None;
+        if !fields.is_empty() {
+            compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+            var = Some(field_var(&fields));
+        }
+        let mut holder_saved = true;
+        if let Some(index) = chain.index {
+            if let Some(var) = var {
+                compiler.emit_ins(Instruction::GetVar(var));
+            }
+            emit_value(compiler, &index)?;
+            if matches!(write, SafeWrite::Assign) {
+                compiler.emit_ins(Instruction::ListSet);
+            } else {
+                compiler.emit_ins(Instruction::PopCache);
+                holder_saved = false;
+                compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
+                compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+            }
+            var = Some(Variable::CacheIndex);
+        }
+        let var = var.expect("a field or an element");
+        match write {
+            SafeWrite::Assign => {}
+            SafeWrite::Change(write) => {
+                for ins in write(var) {
+                    compiler.emit_ins(match ins {
+                        Instruction::SetVarExpr(var) => Instruction::SetVar(var),
+                        ins => ins,
+                    });
+                }
+            }
+            SafeWrite::Logical { or } => {
+                if !compiler
+                    .byond
+                    .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
+                {
+                    compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
+                }
+                let end = Label::Named(compiler.new_label());
+                compiler.emit_ins(Instruction::GetVar(var.clone()));
+                match (value_form, or) {
+                    (true, true) => compiler.emit_ins(Instruction::JmpOr(end.clone())),
+                    (true, false) => compiler.emit_ins(Instruction::JmpAnd(end.clone())),
+                    (false, _) => {
+                        compiler.emit_ins(Instruction::Test);
+                        compiler.emit_ins(if or {
+                            Instruction::Jnz(end.clone())
+                        } else {
+                            Instruction::Jz(end.clone())
+                        });
+                    }
+                }
+                // Preserve the assignment target while evaluating the value.
+                let start = compiler.nodes.len();
+                compiler.implicit_type = implicit;
+                emit_value(compiler, value.expect("a value"))?;
+                compiler.implicit_type = None;
+                if compiler.nodes[start..]
+                    .iter()
+                    .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
+                {
+                    compiler
+                        .nodes
+                        .insert(start, Node::Instruction(Instruction::PushCache, ()));
+                    compiler.emit_ins(Instruction::PopCache);
+                }
+                compiler.emit_ins(if value_form {
+                    Instruction::SetVarExpr(var)
+                } else {
+                    Instruction::SetVar(var)
+                });
+                let Label::Named(end) = end else {
+                    unreachable!()
+                };
+                compiler.emit_label(end);
+            }
+        }
+        if !holder_saved {
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (Some(fields), SafeWrite::Change(write), None) => {
+        for end in ends.into_iter().rev() {
+            compiler.emit_ins(Instruction::PopCache);
+            compiler.emit_label(end);
+        }
+        return Ok(());
+    };
+    match (fields, write, chain.index) {
+        (fields, SafeWrite::Change(write), None) => {
             compiler.emit_ins(Instruction::PopCache);
             for ins in write(field_var(&fields)) {
                 compiler.emit_ins(ins);
             }
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (Some(fields), SafeWrite::Assign, Some(index)) => {
+        (fields, SafeWrite::Assign, Some(index)) => {
             compiler.emit_ins(Instruction::PopCache);
             if value_form {
                 compiler.emit_ins(Instruction::PushTop);
@@ -1801,7 +1905,7 @@ pub(super) fn emit_safe_chain_write(
             compiler.emit_ins(Instruction::ListSet);
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (Some(fields), SafeWrite::Change(write), Some(index)) => {
+        (fields, SafeWrite::Change(write), Some(index)) => {
             let restore_first = compiler.byond.at_least(super::versions::SAFE_ELEMENT_CACHE);
             if !restore_first {
                 warn_list_from_cache(compiler);
@@ -1821,7 +1925,7 @@ pub(super) fn emit_safe_chain_write(
             }
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (Some(fields), SafeWrite::Logical { or }, index) => {
+        (fields, SafeWrite::Logical { or }, index) => {
             if !compiler
                 .byond
                 .at_least(super::versions::SAFE_LOGICAL_ASSIGN)

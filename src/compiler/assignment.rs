@@ -234,6 +234,14 @@ pub(super) fn emit(
     {
         return Ok(EvalKind::Stack);
     }
+    if peek_is_conditional(&lhs) && matches!(op, AssignOp::AndAssign | AssignOp::OrAssign) {
+        let write = super::statements::SafeWrite::Logical {
+            or: op == AssignOp::OrAssign,
+        };
+        if super::statements::emit_safe_write(compiler, &lhs, Some(&rhs), write, true)? {
+            return Ok(EvalKind::Stack);
+        }
+    }
     if peek_is_conditional(&lhs) {
         return emit_conditional(compiler, op, lhs, rhs);
     }
