@@ -1712,6 +1712,17 @@ fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
         .then_some(call)
 }
 
+/// Restore the receiver before the call and report DreamMaker's cache bug.
+fn restore_receiver(compiler: &mut Compiler, call: usize) {
+    compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
+    compiler
+        .nodes
+        .insert(call, Node::Instruction(Instruction::PushCache, ()));
+    compiler
+        .nodes
+        .insert(call, Node::Instruction(Instruction::PopCache, ()));
+}
+
 /// Write through a safe-access chain with its initial receiver on the stack.
 /// Skip on null. `value_form` returns the assigned result or null.
 /// `place` supplies static type information; `static_var` identifies
@@ -1749,15 +1760,8 @@ pub(super) fn emit_safe_chain_write(
         let kind =
             super::follow::emit_typed(compiler, segment, EvalKind::Var(Variable::Cache), None)?;
         compiler.emit_move_to_stack(kind)?;
-        // Restore the receiver after evaluating arguments.
         if let Some(call) = call_after_cache_use(compiler, start) {
-            compiler.warn_bug(SAFE_RECEIVER_BUG, "; dmasm calls the proc on a");
-            compiler
-                .nodes
-                .insert(call, Node::Instruction(Instruction::PushCache, ()));
-            compiler
-                .nodes
-                .insert(call, Node::Instruction(Instruction::PopCache, ()));
+            restore_receiver(compiler, call);
         }
     }
     let implicit = place.and_then(|p| compiler.static_type_name(p));
@@ -1799,13 +1803,19 @@ pub(super) fn emit_safe_chain_write(
         if value_form && copies {
             compiler.emit_ins(Instruction::PushTop);
         }
+        // Restore the holder after the value changes the cache. DreamMaker
+        // uses the cached object as the receiver.
+        if value_used_cache {
+            compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
+            compiler.emit_ins(Instruction::PopCache);
+            compiler.emit_ins(Instruction::PushCache);
+        }
         let start = compiler.nodes.len();
         let kind =
             super::follow::emit_typed(compiler, computed, EvalKind::Var(Variable::Cache), None)?;
         compiler.emit_move_to_stack(kind)?;
-        // DreamMaker uses the receiver left by the value or call arguments.
-        if value_used_cache || call_after_cache_use(compiler, start).is_some() {
-            compiler.warn_bug(SAFE_RECEIVER_BUG, ", matching DreamMaker");
+        if let Some(call) = call_after_cache_use(compiler, start) {
+            restore_receiver(compiler, call);
         }
         let mut var = None;
         if !fields.is_empty() {
@@ -2650,10 +2660,11 @@ pub(super) const POINTER_INDEX_BUG: &str =
      pointers";
 pub(super) const POINTER_INDEX_OURS: &str = "; dmasm dereferences the indexed element";
 
-/// `a?.f(b.x).v = b.y`
-const SAFE_RECEIVER_BUG: &str =
-    "writes through `?.` chains (`a?.f(b.x).v = b.y`): DreamMaker uses \
-     the receiver left by the arguments or assigned value (b)";
+/// `a?.f(b.x).v = b.y`, and `a?.f(b.x).v` read
+pub(super) const SAFE_RECEIVER_BUG: &str =
+    "`?.` chains that continue after a call or list access (`a?.f(b.x).v = b.y`): DreamMaker \
+     uses the receiver left by the arguments or assigned value (b)";
+pub(super) const SAFE_RECEIVER_OURS: &str = "; dmasm uses a";
 
 /// `a?.b ||= c` before 516.1673
 const SAFE_LOGICAL_BUG: &str =

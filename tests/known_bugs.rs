@@ -99,7 +99,8 @@ const CONTINUED: &str =
     "`continue outer` to a labelled `do` ... `while` inside a counted `for` loop \
                          crashes the server";
 const POINTER: &str = "`*p[i]`";
-const RECEIVER: &str = "writes through `?.` chains (`a?.f(b.x).v = b.y`)";
+const RECEIVER: &str =
+    "`?.` chains that continue after a call or list access (`a?.f(b.x).v = b.y`)";
 
 #[test]
 fn a_codebase_is_checked_by_file_and_line() {

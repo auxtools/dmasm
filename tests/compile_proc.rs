@@ -1096,11 +1096,13 @@ fn writing_what_a_call_returns_through_safe_access() {
         ]
         .join("\n")
     );
-    // called on what the value left in the cache, as DreamMaker's is
+    // Restore a after the assigned value changes the receiver cache.
     assert_has(
         &body("a?.f(1).x = a.n.x"),
         &[
             "GetVar cache = arg(0); cache = cache[\"n\"]; cache[\"x\"]",
+            "PopCache",
+            "PushCache",
             "PushInt 1",
             "Call dynamic_proc(\"f\") 1",
         ],
@@ -2123,22 +2125,23 @@ fn deliberate_differences_and_copied_quirks_are_warned_about() {
     warned(
         &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g(b?.n)?.n = 1\n"),
         latest,
-        "dmasm calls the proc on a",
+        "dmasm uses a",
     );
-    warned(
-        &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g().n = b.n\n"),
-        latest,
-        "the receiver left by the arguments or assigned value (b), matching DreamMaker",
-    );
-    warned(
-        &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g(b.n).n = 1\n"),
-        latest,
-        "matching DreamMaker",
-    );
-    quiet(
-        &format!("{types}/proc/f(datum/t/a, b)\n\ta?.g().n = b\n"),
-        latest,
-    );
+    for line in [
+        "a?.g().n = b.n",
+        "a?.g(b.n).n = 1",
+        "a?.L[1].n = b.n",
+        "return a?.g(b.n).n",
+    ] {
+        warned(
+            &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\t{line}\n"),
+            latest,
+            "(b); dmasm uses a",
+        );
+    }
+    for line in ["a?.g().n = b", "return a?.g(b.n)", "return a?.g(b).n"] {
+        quiet(&format!("{types}/proc/f(datum/t/a, b)\n\t{line}\n"), latest);
+    }
     warned(
         &format!("{types}/proc/f(datum/t/a)\n\ta?.n ||= 1\n"),
         v(1672),
