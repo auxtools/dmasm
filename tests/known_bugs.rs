@@ -42,6 +42,13 @@ const CODE: &str = "\
 \treturn pick(1; a, 0; b)
 /proc/refused()
 \treturn &5
+/datum/num/var/n
+/datum/num/proc/me(x)
+\treturn src
+/proc/receiver(datum/num/a, datum/num/b)
+\ta?.me().n = b.n
+\ta?.me(b.n).n = 1
+\ta?.me().n = 1
 ";
 
 /// Return (line, proc, diagnostic prefix) findings and unchecked procs.
@@ -92,6 +99,8 @@ const CONTINUED: &str =
     "`continue outer` to a labelled `do` ... `while` inside a counted `for` loop \
                          crashes the server";
 const POINTER: &str = "`*p[i]`";
+const RECEIVER: &str =
+    "`?.` chains that continue after a call or list access (`a?.f(b.x).v = b.y`)";
 
 #[test]
 fn a_codebase_is_checked_by_file_and_line() {
@@ -118,6 +127,8 @@ fn a_codebase_is_checked_by_file_and_line() {
                 "/datum/num/weighted",
                 "pick() ends with a zero-weight entry, where DreamMaker's code jumps out of the proc"
             ),
+            row(44, "/receiver", RECEIVER),
+            row(45, "/receiver", RECEIVER),
         ]
     );
     // Report unsupported procs as unchecked.
@@ -148,6 +159,8 @@ fn only_the_bugs_of_the_build_are_found() {
                 "/datum/num/weighted",
                 "parameter b's default divides a var by a number"
             ),
+            row(44, "/receiver", RECEIVER),
+            row(45, "/receiver", RECEIVER),
         ]
     );
     let (bugs, _) = found(ByondVersion::new(515, 1647));
@@ -167,6 +180,8 @@ fn only_the_bugs_of_the_build_are_found() {
                 "/datum/num/weighted",
                 "pick() ends with a zero-weight entry, where DreamMaker's code jumps out of the proc"
             ),
+            row(44, "/receiver", RECEIVER),
+            row(45, "/receiver", RECEIVER),
         ]
     );
 }

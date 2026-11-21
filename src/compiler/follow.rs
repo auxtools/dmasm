@@ -713,6 +713,13 @@ fn emit_safe_inner<'a>(
                     matches!(n, crate::Node::Instruction(i, _) if super::procs::touches_cache(i))
                 });
                 let pop = touched || it.as_slice().is_empty();
+                // DreamMaker keeps the arguments' receiver when the chain continues.
+                if touched && !it.as_slice().is_empty() {
+                    compiler.warn_bug(
+                        super::statements::SAFE_RECEIVER_BUG,
+                        super::statements::SAFE_RECEIVER_OURS,
+                    );
+                }
                 if pop {
                     compiler.emit_ins(Instruction::PopCache);
                     popped = true;

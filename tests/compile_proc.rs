@@ -1068,6 +1068,121 @@ fn logical_assignment_through_safe_access() {
 }
 
 #[test]
+fn writing_what_a_call_returns_through_safe_access() {
+    let types =
+        "/datum/d\n\tvar/datum/d/n\n\tvar/x\n\tvar/list/L\n/datum/d/proc/f(a)\n\treturn n\n";
+    let body = |line: &str| {
+        compile(
+            &format!("{types}/proc/g(datum/d/a, b)\n\t{line}\n"),
+            "",
+            "g",
+        )
+    };
+    // Evaluate the value before the call and restore the holder after assignment.
+    assert_eq!(
+        body("a?.f(1).x = b"),
+        [
+            "GetVar arg(0)",
+            "SetCachePopJmpIfNull LAB_0001",
+            "PushCache",
+            "GetVar arg(1)",
+            "PushInt 1",
+            "Call dynamic_proc(\"f\") 1",
+            "SetVar cache",
+            "SetVar cache[\"x\"]",
+            "PopCache",
+            "LAB_0001:",
+            "End",
+        ]
+        .join("\n")
+    );
+    // Restore a after the assigned value changes the receiver cache.
+    assert_has(
+        &body("a?.f(1).x = a.n.x"),
+        &[
+            "GetVar cache = arg(0); cache = cache[\"n\"]; cache[\"x\"]",
+            "PopCache",
+            "PushCache",
+            "PushInt 1",
+            "Call dynamic_proc(\"f\") 1",
+        ],
+    );
+    // Keep the assigned value as the expression result.
+    assert_has(
+        &body("return (a?.f(1).n.x = b)"),
+        &[
+            "GetVar arg(1)",
+            "PushTop",
+            "PushInt 1",
+            "Call dynamic_proc(\"f\") 1",
+            "SetVar cache",
+            "SetVar cache = cache[\"n\"]; cache[\"x\"]",
+            "PopCache",
+        ],
+    );
+    assert_has(
+        &body("return a?.f(1).x++"),
+        &["SetVar cache", "PostInc cache[\"x\"]", "PopCache"],
+    );
+    assert_has(
+        &body("a?.f(1).L[2] = b"),
+        &[
+            "SetVar cache",
+            "GetVar cache[\"L\"]",
+            "PushInt 2",
+            "ListSet",
+            "PopCache",
+        ],
+    );
+    assert_has(
+        &body("a?.f(1).L[2] += b"),
+        &[
+            "SetVar cache",
+            "GetVar cache[\"L\"]",
+            "PushInt 2",
+            "PopCache",
+            "SetVar cache_key",
+            "SetVar cache",
+            "AugAdd cache[cache_key]",
+        ],
+    );
+    // Preserve the target while evaluating the right side of `||=`.
+    assert_has(
+        &body("a?.L[1].x ||= a.x"),
+        &[
+            "GetVar cache[\"L\"]",
+            "PushInt 1",
+            "ListGet",
+            "SetVar cache",
+            "GetVar cache[\"x\"]",
+            "Test",
+            "Jnz LAB_0003",
+            "PushCache",
+            "GetVar cache = arg(0); cache[\"x\"]",
+            "PopCache",
+            "SetVar cache[\"x\"]",
+            "LAB_0003:",
+            "PopCache",
+            "LAB_0001:",
+        ],
+    );
+    assert_has(
+        &body("return (a?.f(1)[2] &&= b)"),
+        &[
+            "Call dynamic_proc(\"f\") 1",
+            "PushInt 2",
+            "PopCache",
+            "SetVar cache_key",
+            "SetVar cache",
+            "GetVar cache[cache_key]",
+            "JmpAnd LAB_0006",
+            "GetVar arg(1)",
+            "SetVarExpr cache[cache_key]",
+        ],
+    );
+}
+
+#[test]
 fn or_assign_saves_the_cache_for_some_values() {
     let types =
         "var/gx = 1\n/datum/t\n\tvar/n = 1\n\tvar/m = 2\n\tvar/static/st = 3\n\tvar/const/k = 4\n";
@@ -2010,8 +2125,23 @@ fn deliberate_differences_and_copied_quirks_are_warned_about() {
     warned(
         &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\ta?.g(b?.n)?.n = 1\n"),
         latest,
-        "on its receiver",
+        "dmasm uses a",
     );
+    for line in [
+        "a?.g().n = b.n",
+        "a?.g(b.n).n = 1",
+        "a?.L[1].n = b.n",
+        "return a?.g(b.n).n",
+    ] {
+        warned(
+            &format!("{types}/proc/f(datum/t/a, datum/t/b)\n\t{line}\n"),
+            latest,
+            "(b); dmasm uses a",
+        );
+    }
+    for line in ["a?.g().n = b", "return a?.g(b.n)", "return a?.g(b).n"] {
+        quiet(&format!("{types}/proc/f(datum/t/a, b)\n\t{line}\n"), latest);
+    }
     warned(
         &format!("{types}/proc/f(datum/t/a)\n\ta?.n ||= 1\n"),
         v(1672),
